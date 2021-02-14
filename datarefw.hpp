@@ -144,8 +144,8 @@ public:
 				break;
 		};		
 
-        return os;
-    }
+		return os;
+	}
 
 	constexpr friend FindDataref<T>&
 	operator+(const int val, const FindDataref<T>& obj) {
