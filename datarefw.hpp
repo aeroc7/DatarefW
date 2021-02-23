@@ -1,15 +1,15 @@
 // Copyright (c) 2021 Bennett Anderson
-// 
+//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -18,20 +18,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 //
+// You may choose to define on your own the following:
 //
-// This DataRef wrapper makes use of several 'utility' functions, of which you may
-// define your own;
-// 
-//      - DATAREFW_ASSERT(cond)             // - Custom assert function
-//      - DATAREFW_LOGGER(msg)              // - Logger function, called with a
-// 											// single null-terminated c-string
-// 
-// This DataRef wrapper also makes use of several features that you may not want; 
-// 
-//      - DATAREFW_DISABLE_EXCEPTIONS       // - If defined, Disable C++ exceptions
-// 											// explicitly thrown by us
-//		- DATAREFW_HARD_ASSERT_FAIL			// - If defined, Assertion will fail if
-//											// DataRef can not be found
+// 	- DATAREFW_ASSERT(cond)			// - Custom assert function
+//
+// 	- DATAREFW_HARD_ASSERT_FAIL		// - If defined, Assertion will fail if
+// 						// DataRef can not be found
 
 #ifndef _DATAREFW_H_
 #define _DATAREFW_H_
@@ -39,6 +31,7 @@
 #include <XPLMDataAccess.h>
 #include <XPLMUtilities.h>
 
+#include <type_traits>
 #include <string>
 #include <cstring>
 #include <iostream>
@@ -46,65 +39,60 @@
 
 #define DATAREFW_UNUSED(a) (void)(a)
 
-#ifndef DATAREFW_LOGGER
-# define __FILENAME__ (strrchr(__FILE__, '/') ? \
-	strrchr(__FILE__, '/') + 1 : __FILE__)
-namespace {
-	void datarefw_log_msg(const std::string& msg, int line_number,
-		const char *filename)
-	{
-		std::string fini_msg = "[DATAREFW_LOGGER] [";
-		fini_msg += filename;
-		fini_msg += ":";
-		fini_msg += std::to_string(line_number);
-		fini_msg += "]: " + msg;
-		fini_msg += "\n";
-		
-		std::cout << fini_msg;
-		std::cout << std::flush;
-		XPLMDebugString(fini_msg.c_str());
-	}
-} // namespace
-# define DATAREFW_LOGGER(msg) datarefw_log_msg(msg, __LINE__, __FILENAME__)
-#endif // DATAREFW_LOGGER
-
 #ifndef DATAREFW_ASSERT
-# if defined(__GNUC__) || defined(__clang__)
+# if (defined(__GNUC__) || defined(__clang__))
 #  include <cstdlib>
 #  define DATAREFW_COND_UNLIKELY(x) __builtin_expect(x, 0)
 #  define DATAREFW_ASSERT(x) \
 	do { \
 		if (DATAREFW_COND_UNLIKELY(!(x))) { \
-			DATAREFW_LOGGER(std::string("Assertion " + std::string(#x) + " failed")); \
+			XPLMDebugString(std::string("Assertion " + \
+				std::string(#x) + " failed\n").c_str()); \
 			abort(); \
 		} \
 	} while (0)
 # else
-# include <cassert>
-# define DATAREFW_ASSERT(cond) assert(cond)
+#  include <cassert>
+#  define DATAREFW_ASSERT(cond) assert(cond)
 # endif // defined(__GNUC__) || defined(__clang__)
 #endif // DATAREFW_ASSERT
 
 namespace datarefw {
 
-template <typename T>
-class FindDataref {
-public:
 	using DrIntArr = std::vector<int>;
 	using DrFloatArr = std::vector<float>;
 
-	static_assert(
-		(
-			std::is_same<int, T>::value         ||
-			std::is_same<float, T>::value       ||
-			std::is_same<double, T>::value      ||
-			std::is_same<DrIntArr, T>::value    ||
-			std::is_same<DrFloatArr, T>::value  ||
-			std::is_same<std::string, T>::value
-		),
-		"Unsupported type"
-	);
+namespace datarefw_utils_ {
 
+	template <typename T, typename U>
+	constexpr auto
+	same_short() -> bool {
+		return std::is_same<T, U>::value;
+	}
+
+	template <typename T>
+	constexpr auto
+	verify_types() -> void {
+		static_assert(
+			(
+			same_short<int, T>()        ||
+			same_short<float, T>()      ||
+			same_short<double, T>()     ||
+			same_short<DrIntArr, T>()   ||
+			same_short<DrFloatArr, T>() ||
+			same_short<std::string, T>()
+			),
+			"Unsupported Type"
+		);
+	}
+
+	
+
+}
+
+template <typename T>
+class FindDataref {
+public:
 	void
 	find_dataref(const std::string& dr_str) {
 		dataref_name = dr_str;
@@ -112,10 +100,11 @@ public:
 	}
 
 	FindDataref() {
-
+		datarefw_utils_::verify_types<T>();
 	}
 
 	FindDataref(const std::string& dr_str) {
+		datarefw_utils_::verify_types<T>();
 		find_dataref(dr_str);
 	}
 
@@ -142,12 +131,12 @@ public:
 			case xplmType_Data:
 				os << val.get_dr_val_str();
 				break;
-		};		
+		};
 
 		return os;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator+(const int val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_i();
 		nval += val;
@@ -155,7 +144,7 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator+(const float val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_f();
 		nval += val;
@@ -163,7 +152,7 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator+(const double val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_d();
 		nval += val;
@@ -171,7 +160,7 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator+(const std::string& val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_str();
 		nval += val;
@@ -179,7 +168,39 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	FindDataref<T>&
+	operator+=(const int val) {
+		auto nval = get_dr_val_i();
+		nval += val;
+		set_dr_val_i(nval);
+		return *this;
+	}
+
+	FindDataref<T>&
+	operator+=(const float val) {
+		auto nval = get_dr_val_f();
+		nval += val;
+		set_dr_val_f(nval);
+		return *this;
+	}
+
+	FindDataref<T>&
+	operator+=(const double val) {
+		auto nval = get_dr_val_d();
+		nval += val;
+		set_dr_val_d(nval);
+		return *this;
+	}
+
+	FindDataref<T>&
+	operator+=(const std::string& val) {
+		auto nval = get_dr_val_str();
+		nval += val;
+		set_dr_val_str(nval);
+		return *this;
+	}
+	
+	friend FindDataref<T>&
 	operator-(const int val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_i();
 		nval -= val;
@@ -187,7 +208,7 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator-(const float val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_f();
 		nval -= val;
@@ -195,7 +216,7 @@ public:
 		return obj;
 	}
 
-	constexpr friend FindDataref<T>&
+	friend FindDataref<T>&
 	operator-(const double val, const FindDataref<T>& obj) {
 		auto nval = obj.get_dr_val_d();
 		nval -= val;
@@ -222,17 +243,17 @@ public:
 	}
 
 	constexpr
-	operator int() const {
+	operator int() const noexcept {
 		return get_dr_val_i();
 	}
 
 	constexpr
-	operator float() const {
+	operator float() const noexcept {
 		return get_dr_val_f();
 	}
 
 	constexpr
-	operator double() const {
+	operator double() const noexcept {
 		return get_dr_val_d();
 	}
 
@@ -241,7 +262,7 @@ public:
 		return get_dr_val_str();
 	}
 
-	constexpr
+	constexpr explicit
 	operator bool() const noexcept {
 		return found();
 	}
@@ -264,17 +285,10 @@ private:
 		dataref_loc = XPLMFindDataRef(dataref_name.c_str());
 
 		if (dataref_loc == nullptr) {
-#ifndef DATAREFW_DISABLE_EXCEPTIONS
-			throw std::runtime_error(std::string("Failed to find DataRef " +
-				dataref_name).c_str());
-#else
-			DATAREFW_LOGGER(std::string("Failed to find DataRef " +
-				dataref_name).c_str())
-# ifdef DATAREFW_HARD_ASSERT_FAIL
+#ifdef DATAREFW_HARD_ASSERT_FAIL
 			DATAREFW_ASSERT(dataref_loc != nullptr);
-# endif // DATAREFW_HARD_ASSERT_FAIL
+#endif // DATAREFW_HARD_ASSERT_FAIL
 			return;
-#endif // DATAREFW_DISABLE_EXCEPTIONS
 		}
 
 		dataref_types = XPLMGetDataRefTypes(dataref_loc);
@@ -318,13 +332,7 @@ private:
 
 	void
 	verify_dr_can_write() {
-#ifndef DATAREFW_DISABLE_EXCEPTIONS
-		if (!is_writable()) {
-			throw std::runtime_error("DataRef is not writable");
-		}
-#else
-		DATAREFW_ASSERT(is_writable());
-#endif // DATAREFW_DISABLE_EXCEPTIONS
+		DATAREFW_ASSERT(is_writable != false);
 	}
 
 	// Get Integer DataRef
@@ -387,6 +395,219 @@ private:
 	XPLMDataTypeID dataref_types { xplmType_Unknown };
 	bool dataref_writable { false };
 	bool dataref_found { false };
+};
+
+template <typename T>
+class CreateDataref {
+public:
+	CreateDataref() {
+		datarefw_utils_::verify_types<T>();
+	}
+
+	CreateDataref(const std::string& pdr_path, bool pis_writable = false) {
+		datarefw_utils_::verify_types<T>();
+		create_dataref(pdr_path, pis_writable);
+	}
+
+	void
+	create_dataref(const std::string& pdr_path, bool pis_writable = false) {
+		datarefw_utils_::verify_types<T>();
+		dataref_name = pdr_path;
+		dataref_writable = pis_writable;
+		impl_create_dataref();
+	}
+
+	CreateDataref(const CreateDataref<T>& dr_o) = default;
+	CreateDataref(CreateDataref<T>&& dr_o) = default;
+	CreateDataref<T>& operator=(const CreateDataref<T>& dr_o) = default;
+	CreateDataref<T>& operator=(CreateDataref<T>&& dr_o) = default;
+
+
+private:
+	template <typename U>
+	struct type_is_of_array {
+		static constexpr bool value =
+			(datarefw_utils_::same_short<U, DrIntArr>()   ||
+			datarefw_utils_::same_short<U, DrFloatArr>()  ||
+			datarefw_utils_::same_short<U, std::string>());
+	};
+
+	template <typename U>
+	static CreateDataref<U> *
+	impl_proc_ref(void *refcon) {
+		DATAREFW_ASSERT(refcon != nullptr);
+		return reinterpret_cast<CreateDataref<U> *> (refcon);
+	}
+
+	template <typename U, typename = std::enable_if_t<type_is_of_array<U>::value> >
+	static void
+	impl_dr_write_tmplt_arr(void *refcon, U *values, int offset, int max) {
+		int upper_limit = 0;
+		U new_val;
+		const auto odr = impl_proc_ref<U>(refcon);
+		const int a_sz = static_cast<int> (odr->dataref_storage.size());
+
+		if (values == nullptr) {
+			return;
+		}
+
+		DATAREFW_ASSERT(offset < a_sz);
+		DATAREFW_ASSERT(max < a_sz);
+
+		if (max == 0) {
+			upper_limit = a_sz;
+		} else {
+			upper_limit = max;
+		}
+
+		new_val.reserve(a_sz);
+		std::memcpy(&new_val[0], values[offset], upper_limit);
+		odr->dataref_storage = new_val;
+	}
+
+	template <typename U, typename = std::enable_if_t<type_is_of_array<U>::value> >
+	static int
+	impl_dr_read_tmplt_arr(void *refcon, U *values, int offset, int max) {
+		int upper_limit = 0;
+		const auto odr = impl_proc_ref<U>(refcon);
+		const int a_sz = static_cast<int> (odr->dataref_storage.size());
+
+		if (values == nullptr) {
+			return a_sz;
+		}
+
+		DATAREFW_ASSERT(offset < a_sz);
+		DATAREFW_ASSERT(max < a_sz);
+
+		if (max == 0) {
+			upper_limit = a_sz;
+		} else {
+			upper_limit = max;
+		}
+
+		std::memcpy(values, &odr->dataref_storage[0], upper_limit);
+		return 0;
+	}
+
+	static int
+	impl_dr_read_i(void *refcon) {
+		datarefw_utils_::same_short<T, int>();
+		return impl_proc_ref<T>(refcon)->dataref_storage;
+	}
+
+	static void
+	impl_dr_write_i(void *refcon, int val) {
+		datarefw_utils_::same_short<T, int>();
+		impl_proc_ref<T>(refcon)->dataref_storage = val;
+	}
+
+	static float
+	impl_dr_read_f(void *refcon) {
+		datarefw_utils_::same_short<T, float>();
+		return impl_proc_ref<T>(refcon)->dataref_storage;
+	}
+
+	static void
+	impl_dr_write_f(void *refcon, float val) {
+		datarefw_utils_::same_short<T, float>();
+		impl_proc_ref<T>(refcon)->dataref_storage = val;
+	}
+
+	static double
+	impl_dr_read_d(void *refcon) {
+		datarefw_utils_::same_short<T, double>();
+		return impl_proc_ref<T>(refcon)->dataref_storage;
+	}
+
+	static void
+	impl_dr_write_d(void *refcon, double val) {
+		datarefw_utils_::same_short<T, double>();
+		impl_proc_ref<T>(refcon)->dataref_storage = val;
+	}
+
+	static int
+	impl_dr_read_vi(void *refcon, int *values, int offset, int max) {
+		datarefw_utils_::same_short<T, DrIntArr>();
+		return impl_dr_read_tmplt_arr<int>(refcon, values, offset, max);
+	}
+
+	static void
+	impl_dr_write_vi(void *refcon, int *values, int offset, int max) {
+		datarefw_utils_::same_short<T, DrIntArr>();
+		impl_dr_write_tmplt_arr<int>(refcon, values, offset, max);
+	}
+
+	static float
+	impl_dr_read_vf(void *refcon, float *values, int offset, int max) {
+		datarefw_utils_::same_short<T, DrFloatArr>();
+		return impl_dr_read_tmplt_arr<float>(refcon, values, offset, max);
+	}
+
+	static void
+	impl_dr_write_vf(void *refcon, float *values, int offset, int max) {
+		datarefw_utils_::same_short<T, DrFloatArr>();
+		impl_dr_write_tmplt_arr<float>(refcon, values, offset, max);
+	}
+
+	static int
+	impl_dr_read_b(void *refcon, void *values, int offset, int max) {
+		datarefw_utils_::same_short<T, std::string>();
+		return impl_dr_read_tmplt_arr<void>(refcon, values, offset, max);
+	}
+
+	static void
+	impl_dr_write_b(void *refcon, void *values, int offset, int max) {
+		datarefw_utils_::same_short<T, std::string>();
+		impl_dr_write_tmplt_arr<void>(refcon, values, offset, max);
+	}
+
+	void
+	impl_dr_get_datatype() {
+		if (datarefw_utils_::same_short<T, int>()) {
+			dataref_types = xplmType_Int;
+		} else if (datarefw_utils_::same_short<T, float>()) {
+			dataref_types = xplmType_Float;
+		} else if (datarefw_utils_::same_short<T, double>()) {
+			dataref_types = xplmType_Double;
+		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+			dataref_types = xplmType_IntArray;
+		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+			dataref_types = xplmType_FloatArray;
+		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+			dataref_types = xplmType_Data;
+		}
+	}
+
+	void impl_create_dataref() {
+		DATAREFW_ASSERT(dataref_name != "");
+		DATAREFW_ASSERT(dataref_name.find(' ') == std::string::npos);
+
+		impl_dr_get_datatype();
+
+		dataref_loc = XPLMRegisterDataAccessor(
+			dataref_name.c_str(),
+			dataref_types, dataref_writable,
+			impl_dr_read_i, impl_dr_write_i,
+			impl_dr_read_f, impl_dr_write_f,
+			impl_dr_read_d, impl_dr_write_d,
+			impl_dr_read_vi, impl_dr_write_vi,
+			nullptr, nullptr,//impl_dr_read_vf, impl_dr_write_vf,
+			nullptr, nullptr,//impl_dr_read_b, impl_dr_write_b,
+			this, this);
+	}
+
+	void impl_dr_cleanup() {
+		if (dataref_loc) {
+			XPLMUnregisterDataAccessor(dataref_loc);
+			dataref_loc = nullptr;
+		}
+	}
+
+	std::string dataref_name;
+	XPLMDataRef dataref_loc { nullptr };
+	XPLMDataTypeID dataref_types { xplmType_Unknown };
+	bool dataref_writable { false };
+	T dataref_storage { };
 };
 
 } // namespace datarefw
