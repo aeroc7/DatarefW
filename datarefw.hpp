@@ -298,8 +298,8 @@ private:
 				break;
 			case (xplmType_Int | xplmType_Float | xplmType_Double):
 				DATAREFW_ASSERT(
-					(std::is_same<int, T>::value) 		||
-					(std::is_same<float, T>::value)		||
+					(std::is_same<int, T>::value)  ||
+					(std::is_same<float, T>::value)||
 					(std::is_same<double, T>::value)
 				);
 				break;
@@ -388,6 +388,13 @@ private:
 	bool dataref_found { false };
 };
 
+template <typename U>
+	struct dr_type_is_array :
+		std::integral_constant<bool,
+			std::is_same<DrIntArr, U>::value ||
+			std::is_same<DrFloatArr, U>::value> {};
+
+
 template <typename T, std::size_t ARRAY_SIZE = 0>
 class CreateDataref {
 public:
@@ -411,16 +418,73 @@ public:
 	CreateDataref<T, ARRAY_SIZE>& operator=(const CreateDataref<T, ARRAY_SIZE>& dr_o) = default;
 	CreateDataref<T, ARRAY_SIZE>& operator=(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
 
+	template <typename U = T, typename val_type = typename U::value_type,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	constexpr auto
+	operator[](std::size_t index) -> val_type const {
+		static_assert(index < ARRAY_SIZE, "Out of bounds access to an array is Undefined Behavior");
+		return dataref_storage[index];
+	}
+
+	// Prefix increment (int only)
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	CreateDataref<T, ARRAY_SIZE>&
+	operator++() {
+		dataref_storage++;
+		return *this;
+	}
+
+	// Postfix increment (int only)
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	CreateDataref<T, ARRAY_SIZE>
+	operator++(int) {
+		auto old = *this;
+		operator++();
+		return old;
+	}
+
+	// Prefix decrement (int only)
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	CreateDataref<T, ARRAY_SIZE>&
+	operator--() {
+		dataref_storage--;
+		return *this;
+	}
+
+	// Postfix decrement (int only)
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	CreateDataref<T, ARRAY_SIZE>
+	operator--(int) {
+		auto old = *this;
+		operator--();
+		return old;
+	}
+
+	constexpr friend std::ostream&
+	operator<<(std::ostream& os, const CreateDataref<T, ARRAY_SIZE>& obj) {
+		os << obj.dataref_storage;
+		return os;
+	}
+
+	constexpr
+	operator T() const noexcept {
+		return dataref_storage;
+	}
+
+	constexpr explicit
+	operator bool() const noexcept {
+		return (dataref_loc != nullptr);
+	}
+
 	~CreateDataref() {
 		impl_dr_cleanup();
 	}
 private:
-	template <typename U>
-	struct dr_type_is_array :
-		std::integral_constant<bool,
-			std::is_same<DrIntArr, U>::value ||
-			std::is_same<DrFloatArr, U>::value> {};
-
+	
 	template <typename U>
 	struct dr_type_is_byte :
 		std::integral_constant<bool,
