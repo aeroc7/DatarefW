@@ -59,35 +59,26 @@
 
 namespace datarefw {
 
-	using DrIntArr = std::vector<int>;
-	using DrFloatArr = std::vector<float>;
+typedef std::vector<int> DrIntArr;
+typedef std::vector<float> DrFloatArr;
 
 namespace datarefw_utils_ {
-
-	template <typename T, typename U>
-	constexpr auto
-	same_short() -> bool {
-		return std::is_same<T, U>::value;
-	}
 
 	template <typename T>
 	constexpr auto
 	verify_types() -> void {
 		static_assert(
 			(
-			same_short<int, T>()        ||
-			same_short<float, T>()      ||
-			same_short<double, T>()     ||
-			same_short<DrIntArr, T>()   ||
-			same_short<DrFloatArr, T>() ||
-			same_short<std::string, T>()
+			std::is_same<int, T>::value        ||
+			std::is_same<float, T>::value      ||
+			std::is_same<double, T>::value     ||
+			std::is_same<DrIntArr, T>::value   ||
+			std::is_same<DrFloatArr, T>::value ||
+			std::is_same<std::string, T>::value
 			),
 			"Unsupported Type"
 		);
 	}
-
-	
-
 }
 
 template <typename T>
@@ -397,206 +388,325 @@ private:
 	bool dataref_found { false };
 };
 
-template <typename T>
+template <typename T, std::size_t ARRAY_SIZE = 0>
 class CreateDataref {
 public:
 	CreateDataref() {
-		datarefw_utils_::verify_types<T>();
+
 	}
 
 	CreateDataref(const std::string& pdr_path, bool pis_writable = false) {
-		datarefw_utils_::verify_types<T>();
 		create_dataref(pdr_path, pis_writable);
 	}
 
 	void
 	create_dataref(const std::string& pdr_path, bool pis_writable = false) {
-		datarefw_utils_::verify_types<T>();
 		dataref_name = pdr_path;
 		dataref_writable = pis_writable;
 		impl_create_dataref();
 	}
 
-	CreateDataref(const CreateDataref<T>& dr_o) = default;
-	CreateDataref(CreateDataref<T>&& dr_o) = default;
-	CreateDataref<T>& operator=(const CreateDataref<T>& dr_o) = default;
-	CreateDataref<T>& operator=(CreateDataref<T>&& dr_o) = default;
+	CreateDataref(const CreateDataref<T, ARRAY_SIZE>& dr_o) = default;
+	CreateDataref(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
+	CreateDataref<T, ARRAY_SIZE>& operator=(const CreateDataref<T, ARRAY_SIZE>& dr_o) = default;
+	CreateDataref<T, ARRAY_SIZE>& operator=(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
 
-
+	~CreateDataref() {
+		impl_dr_cleanup();
+	}
 private:
 	template <typename U>
-	struct type_is_of_array {
-		static constexpr bool value =
-			(datarefw_utils_::same_short<U, DrIntArr>()   ||
-			datarefw_utils_::same_short<U, DrFloatArr>()  ||
-			datarefw_utils_::same_short<U, std::string>());
-	};
+	struct dr_type_is_array :
+		std::integral_constant<bool,
+			std::is_same<DrIntArr, U>::value ||
+			std::is_same<DrFloatArr, U>::value> {};
 
 	template <typename U>
-	static CreateDataref<U> *
+	struct dr_type_is_byte :
+		std::integral_constant<bool,
+			std::is_same<std::string, U>::value> {};
+
+	template <typename U>
+	struct dr_type_is_number :
+		std::integral_constant<bool,
+			std::is_same<int, U>::value ||
+			std::is_same<float, U>::value ||
+			std::is_same<double, U>::value> {};
+
+	template <typename U, std::size_t ARR_SIZE = 0>
+	static CreateDataref<U, ARR_SIZE> *
 	impl_proc_ref(void *refcon) {
 		DATAREFW_ASSERT(refcon != nullptr);
-		return reinterpret_cast<CreateDataref<U> *> (refcon);
+		return reinterpret_cast<CreateDataref<U, ARR_SIZE> *> (refcon);
 	}
 
-	template <typename U, typename = std::enable_if_t<type_is_of_array<U>::value> >
+	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
 	static void
-	impl_dr_write_tmplt_arr(void *refcon, U *values, int offset, int max) {
-		int upper_limit = 0;
-		U new_val;
-		const auto odr = impl_proc_ref<U>(refcon);
-		const int a_sz = static_cast<int> (odr->dataref_storage.size());
-
-		if (values == nullptr) {
+	impl_dr_write_byte(void *refcon, void *values, int offset, int count) {
+		if (values == nullptr || offset >= count) {
 			return;
 		}
 
-		DATAREFW_ASSERT(offset < a_sz);
-		DATAREFW_ASSERT(max < a_sz);
+		DATAREFW_ASSERT(offset >= 0);
 
-		if (max == 0) {
-			upper_limit = a_sz;
-		} else {
-			upper_limit = max;
+		auto ncount = count - offset;
+		char *cvalues = static_cast<char *> (values);
+		char *temp_val = new char[count];
+		const auto odr = impl_proc_ref<std::string>(refcon);
+
+		cvalues += offset; // Read from offset
+		std::memcpy(temp_val, cvalues, ncount);
+
+		// Ensure proper null-termination on c-strings
+		if (temp_val[ncount] != '\0') {
+			temp_val[ncount] = '\0';
 		}
 
-		new_val.reserve(a_sz);
-		std::memcpy(&new_val[0], values[offset], upper_limit);
-		odr->dataref_storage = new_val;
+		odr->dataref_storage = std::string(temp_val);
+		delete[] temp_val;
 	}
 
-	template <typename U, typename = std::enable_if_t<type_is_of_array<U>::value> >
+	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
 	static int
-	impl_dr_read_tmplt_arr(void *refcon, U *values, int offset, int max) {
-		int upper_limit = 0;
-		const auto odr = impl_proc_ref<U>(refcon);
+	impl_dr_read_byte(void *refcon, void *values, int offset, int max) {
+		const auto odr = impl_proc_ref<std::string>(refcon);
 		const int a_sz = static_cast<int> (odr->dataref_storage.size());
 
 		if (values == nullptr) {
 			return a_sz;
 		}
 
-		DATAREFW_ASSERT(offset < a_sz);
-		DATAREFW_ASSERT(max < a_sz);
+		DATAREFW_ASSERT(offset >= 0);
 
-		if (max == 0) {
-			upper_limit = a_sz;
-		} else {
+		int upper_limit;
+		if ((offset + max) < a_sz) {
 			upper_limit = max;
+		} else {
+			upper_limit = a_sz;
 		}
 
-		std::memcpy(values, &odr->dataref_storage[0], upper_limit);
-		return 0;
+		char *cvalues = static_cast<char *>(values);
+		char *dr_str = &odr->dataref_storage[0];
+
+		dr_str += offset; // Offset
+		std::memcpy(values, dr_str, upper_limit);
+
+		// Ensure proper null-termination on c-strings
+		if (cvalues[upper_limit] != '\0') {
+			cvalues[upper_limit] = '\0';
+		}
+
+		return upper_limit;
 	}
 
+	template <typename U, typename V = T, std::size_t ARR_SIZE = ARRAY_SIZE,
+		typename std::enable_if<dr_type_is_array<V>::value, V>::type* = nullptr>
+	static void
+	impl_dr_write_tmplt_arr(void *refcon, U *values, int offset, int count) {
+		const auto odr = impl_proc_ref<T, ARR_SIZE>(refcon);
+
+		if (values == nullptr) {
+			return;
+		}
+
+		DATAREFW_ASSERT(offset >= 0);
+
+		for (auto i = 0; i < count; ++i) {
+			U *value_ptr = values;
+			value_ptr += offset;
+			odr->dataref_storage[i] = *value_ptr;
+		}
+	}
+
+	template <typename U, typename V = T, std::size_t ARR_SIZE = ARRAY_SIZE,
+		typename std::enable_if<dr_type_is_array<V>::value, V>::type* = nullptr>
+	static int
+	impl_dr_read_tmplt_arr(void *refcon, U *values, int offset, int max) {
+		const auto odr = impl_proc_ref<T, ARR_SIZE>(refcon);
+		const int a_sz = static_cast<int> (odr->dataref_storage.size());
+
+		if (values == nullptr) {
+			return a_sz;
+		}
+
+		DATAREFW_ASSERT(offset >= 0);
+
+		int upper_limit;
+		if ((offset + max) < a_sz) {
+			upper_limit = max;
+		} else {
+			upper_limit = a_sz;
+		}
+
+		for (auto i = 0; i < upper_limit; ++i) {
+			values[i] = odr->dataref_storage[i + offset];
+		}
+
+		return upper_limit;
+	}
+
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static int
 	impl_dr_read_i(void *refcon) {
-		datarefw_utils_::same_short<T, int>();
 		return impl_proc_ref<T>(refcon)->dataref_storage;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_i(void *refcon, int val) {
-		datarefw_utils_::same_short<T, int>();
 		impl_proc_ref<T>(refcon)->dataref_storage = val;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static float
 	impl_dr_read_f(void *refcon) {
-		datarefw_utils_::same_short<T, float>();
 		return impl_proc_ref<T>(refcon)->dataref_storage;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_f(void *refcon, float val) {
-		datarefw_utils_::same_short<T, float>();
 		impl_proc_ref<T>(refcon)->dataref_storage = val;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static double
 	impl_dr_read_d(void *refcon) {
-		datarefw_utils_::same_short<T, double>();
 		return impl_proc_ref<T>(refcon)->dataref_storage;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_d(void *refcon, double val) {
-		datarefw_utils_::same_short<T, double>();
 		impl_proc_ref<T>(refcon)->dataref_storage = val;
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
 	static int
 	impl_dr_read_vi(void *refcon, int *values, int offset, int max) {
-		datarefw_utils_::same_short<T, DrIntArr>();
 		return impl_dr_read_tmplt_arr<int>(refcon, values, offset, max);
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_vi(void *refcon, int *values, int offset, int max) {
-		datarefw_utils_::same_short<T, DrIntArr>();
 		impl_dr_write_tmplt_arr<int>(refcon, values, offset, max);
 	}
 
-	static float
+	template <typename U = T, typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	static int
 	impl_dr_read_vf(void *refcon, float *values, int offset, int max) {
-		datarefw_utils_::same_short<T, DrFloatArr>();
 		return impl_dr_read_tmplt_arr<float>(refcon, values, offset, max);
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_vf(void *refcon, float *values, int offset, int max) {
-		datarefw_utils_::same_short<T, DrFloatArr>();
 		impl_dr_write_tmplt_arr<float>(refcon, values, offset, max);
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
 	static int
 	impl_dr_read_b(void *refcon, void *values, int offset, int max) {
-		datarefw_utils_::same_short<T, std::string>();
-		return impl_dr_read_tmplt_arr<void>(refcon, values, offset, max);
+		return impl_dr_read_byte(refcon, values, offset, max);
 	}
 
+	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_b(void *refcon, void *values, int offset, int max) {
-		datarefw_utils_::same_short<T, std::string>();
-		impl_dr_write_tmplt_arr<void>(refcon, values, offset, max);
+		impl_dr_write_byte(refcon, values, offset, max);
 	}
 
 	void
 	impl_dr_get_datatype() {
-		if (datarefw_utils_::same_short<T, int>()) {
+		if (std::is_same<T, int>::value) {
 			dataref_types = xplmType_Int;
-		} else if (datarefw_utils_::same_short<T, float>()) {
+		} else if (std::is_same<T, float>::value) {
 			dataref_types = xplmType_Float;
-		} else if (datarefw_utils_::same_short<T, double>()) {
+		} else if (std::is_same<T, double>::value) {
 			dataref_types = xplmType_Double;
-		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+		} else if (std::is_same<T, DrIntArr>::value) {
 			dataref_types = xplmType_IntArray;
-		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+		} else if (std::is_same<T, DrFloatArr>::value) {
 			dataref_types = xplmType_FloatArray;
-		} else if (datarefw_utils_::same_short<T, DrIntArr>()) {
+		} else if (std::is_same<T, std::string>::value) {
 			dataref_types = xplmType_Data;
 		}
 	}
 
-	void impl_create_dataref() {
+	template <typename U = T, typename std::enable_if<dr_type_is_number<U>::value, U>::type* = nullptr>
+	void
+	register_dataref_accessor() {
+		dataref_loc = XPLMRegisterDataAccessor(
+				dataref_name.c_str(),
+				dataref_types, dataref_writable,
+				impl_dr_read_i, impl_dr_write_i,
+				impl_dr_read_f, impl_dr_write_f,
+				impl_dr_read_d, impl_dr_write_d,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				this, this);
+	}
+
+	template <typename U = T, typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	void
+	register_dataref_accessor() {
+		dataref_loc = XPLMRegisterDataAccessor(
+				dataref_name.c_str(),
+				dataref_types, dataref_writable,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				impl_dr_read_vi, impl_dr_write_vi,
+				impl_dr_read_vf, impl_dr_write_vf,
+				nullptr, nullptr,
+				this, this);
+		dataref_storage.resize(ARRAY_SIZE);
+	}
+
+	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
+	void
+	register_dataref_accessor() {
+		dataref_loc = XPLMRegisterDataAccessor(
+				dataref_name.c_str(),
+				dataref_types, dataref_writable,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				nullptr, nullptr,
+				impl_dr_read_b, impl_dr_write_b,
+				this, this);
+	}
+
+	// I'm sure there's a more *elaborate* way to do the following of which I'm not aware of:
+	template <std::size_t ARR_SIZE = ARRAY_SIZE, typename U = T,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	constexpr auto
+	array_verif() -> void {
+		static_assert(ARR_SIZE > 0, "Array size can't be zero.");
+	}
+
+	template <typename U = T, typename std::enable_if<!dr_type_is_array<U>::value, U>::type* = nullptr>
+	constexpr auto
+	array_verif() -> void {
+
+	}
+
+	void
+	impl_create_dataref() {
 		DATAREFW_ASSERT(dataref_name != "");
 		DATAREFW_ASSERT(dataref_name.find(' ') == std::string::npos);
 
+		datarefw_utils_::verify_types<T>();
+		array_verif();
 		impl_dr_get_datatype();
-
-		dataref_loc = XPLMRegisterDataAccessor(
-			dataref_name.c_str(),
-			dataref_types, dataref_writable,
-			impl_dr_read_i, impl_dr_write_i,
-			impl_dr_read_f, impl_dr_write_f,
-			impl_dr_read_d, impl_dr_write_d,
-			impl_dr_read_vi, impl_dr_write_vi,
-			nullptr, nullptr,//impl_dr_read_vf, impl_dr_write_vf,
-			nullptr, nullptr,//impl_dr_read_b, impl_dr_write_b,
-			this, this);
+		register_dataref_accessor();
 	}
 
-	void impl_dr_cleanup() {
+	void
+	impl_dr_cleanup() {
 		if (dataref_loc) {
 			XPLMUnregisterDataAccessor(dataref_loc);
 			dataref_loc = nullptr;
