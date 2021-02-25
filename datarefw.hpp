@@ -22,9 +22,6 @@
 //
 // 	- DATAREFW_ASSERT(cond)			// - Custom assert function
 //
-// 	- DATAREFW_HARD_ASSERT_FAIL		// - If defined, Assertion will fail if
-// 									// DataRef can not be found
-//
 // The main types associated with datarefs are what are supported, if you try
 // to use an unsupported type, you'll get a compile-time assertion failure.
 //
@@ -47,14 +44,6 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
-
-#ifdef DATAREFW_UNUSED
-# undef DATAREFW_UNUSED
-#endif // DATAREFW_UNUSED
-
-#ifdef DATAREFW_NODISCARD
-# undef DATAREFW_NODISCARD
-#endif // DATAREFW_NODISCARD
 
 #define DATAREFW_UNUSED(a) (void)(a)
 
@@ -147,21 +136,21 @@ public:
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr auto
+	DATAREFW_NODISCARD auto
 	operator[](const std::size_t index) -> val_type {
 		return at(index);
 	}
 
 	template <typename U = T,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr std::size_t
+	DATAREFW_NODISCARD std::size_t
 	size() const noexcept {
 		return impl_get_array_size();
 	}
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr auto
+	DATAREFW_NODISCARD auto
 	at(std::size_t index) -> val_type {
 		DATAREFW_ASSERT(index < impl_get_array_size());
 		return impl_arr_get_val(index);
@@ -170,92 +159,131 @@ public:
 	// Prefix increment
 	template <typename U = T,
 		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	constexpr FindDataref<U>&
+	U
 	operator++() noexcept {
-		impl_verify_dataref_writable();
-		XPLMSetDatai(dataref_loc, impl_dr_get() + 1);
-		return *this;
+		auto st = impl_dr_get() + 1;
+		impl_dr_set(st);
+		return st;
 	}
 
 	// Postfix increment
 	template <typename U = T,
 		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	constexpr FindDataref<U>
+	U
 	operator++(int) noexcept {
-		auto old = *this;
-		operator++();
-		return old;
+		return operator++();
 	}
 
 	// Prefix decrement
 	template <typename U = T,
 		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	constexpr FindDataref<U>&
+	U
 	operator--() noexcept {
-		impl_verify_dataref_writable();
-		XPLMSetDatai(dataref_loc, impl_dr_get() - 1);
-		return *this;
+		auto st = impl_dr_get() - 1;
+		impl_dr_set(st);
+		return st;
 	}
 
 	// Postfix decrement
 	template <typename U = T,
 		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	constexpr FindDataref<U>
+	U
 	operator--(int) noexcept {
-		auto old = *this;
-		operator--();
-		return old;
+		return operator--();
 	}
 
 	// Assignment operator
-	constexpr FindDataref<T>&
+	T
 	operator=(const T& value) {
 		impl_dr_set(value);
-		return *this;
+		return value;
 	}
 
 	// Compound assignment +=
-	constexpr FindDataref<T>&
+	T
 	operator+=(const T& value) {
-		impl_dr_set(impl_dr_get() += value);
-		return *this;
+		auto st = impl_dr_get() + value;
+		impl_dr_set(st);
+		return st;
 	}
 
 	// Compound assignment -=
-	constexpr FindDataref<T>&
+	T
 	operator-=(const T& value) {
-		impl_dr_set(impl_dr_get() -= value);
-		return *this;
+		auto st = impl_dr_get() - value;
+		impl_dr_set(st);
+		return st;
 	}
 
 	// Compound assignment *=
-	constexpr FindDataref<T>&
+	T
 	operator*=(const T& value) {
-		impl_dr_set(impl_dr_get() *= value);
-		return *this;
+		auto st = impl_dr_get() * value;
+		impl_dr_set(st);
+		return st;
 	}
 
 	// Compound assignment /=
-	constexpr FindDataref<T>&
+	T
 	operator/=(const T& value) {
-		impl_dr_set(impl_dr_get() /= value);
-		return *this;
+		auto st = impl_dr_get() / value;
+		impl_dr_set(st);
+		return st;
 	}
 
-	constexpr friend std::ostream&
+	bool
+	operator==(const T& rhs) {
+		return (impl_dr_get() == rhs);
+	}
+
+	bool
+	operator!=(const T& rhs) {
+		return (impl_dr_get() != rhs);
+	}
+
+	bool
+	operator<(const T& rhs) {
+		return (impl_dr_get() < rhs);
+	}
+
+	bool
+	operator>(const T& rhs) {
+		return (impl_dr_get() > rhs);
+	}
+
+	bool
+	operator<=(const T& rhs) {
+		return (impl_dr_get() <= rhs);
+	}
+
+	bool
+	operator>=(const T& rhs) {
+		return (impl_dr_get() >= rhs);
+	}
+
+	friend std::ostream&
 	operator<<(std::ostream& os, const FindDataref<T>& obj) {
 		os << obj.impl_dr_get();
 		return os;
 	}
 
-	constexpr
-	operator T() const noexcept {
+	DATAREFW_NODISCARD bool
+	found() const noexcept {
+		return dataref_found;
+	}
+
+	DATAREFW_NODISCARD bool
+	writable() const noexcept {
+		return dataref_writable;
+	}
+
+	operator T() const {
 		return impl_dr_get();
 	}
 
-	constexpr explicit
+	explicit
 	operator bool() const noexcept {
-		return (dataref_loc != nullptr);
+		return dataref_found;
 	}
 
 	~FindDataref() = default;
@@ -444,9 +472,6 @@ private:
 		dataref_loc = XPLMFindDataRef(dataref_name.c_str());
 
 		if (dataref_loc == nullptr) {
-#ifdef DATAREFW_HARD_ASSERT_FAIL
-			DATAREFW_ASSERT(dataref_loc != nullptr);
-#endif // DATAREFW_HARD_ASSERT_FAIL
 			return;			
 		}
 
@@ -529,110 +554,135 @@ public:
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr auto
+	DATAREFW_NODISCARD auto
 	operator[](const std::size_t index) -> val_type& {
 		return at(index);
 	}
 
 	template <typename U = T,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr size_type
+	DATAREFW_NODISCARD size_type
 	size() const noexcept {
 		return dataref_storage.size();
 	}
 
 	template <typename U = T,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr size_type
+	DATAREFW_NODISCARD size_type
 	max_size() const noexcept {
 		return dataref_storage_max_size;
 	}
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	DATAREFW_NODISCARD constexpr auto
+	DATAREFW_NODISCARD auto
 	at(size_type index) -> val_type& {
 		DATAREFW_ASSERT(index < ARRAY_SIZE);
 		return dataref_storage[index];
 	}
 
 	// Prefix increment
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator++() noexcept {
 		dataref_storage++;
-		return *this;
+		return dataref_storage;
 	}
 
 	// Postfix increment
-	constexpr CreateDataref<T, ARRAY_SIZE>
+	T
 	operator++(int) noexcept {
-		auto old = *this;
-		operator++();
-		return old;
+		return operator++();
 	}
 
 	// Prefix decrement
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator--() noexcept {
 		dataref_storage--;
-		return *this;
+		return dataref_storage;
 	}
 
 	// Postfix decrement
-	constexpr CreateDataref<T, ARRAY_SIZE>
+	T
 	operator--(int) noexcept {
-		auto old = *this;
-		operator--();
-		return old;
+		return operator--();
 	}
 
 	// Assignment operator
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T
 	operator=(const T& value) {
 		dataref_storage = value;
-		return *this;
+		return dataref_storage;
 	}
-
+	
 	// Compound assignment +=
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator+=(const T& value) {
 		dataref_storage += value;
-		return *this;
+		return dataref_storage;
 	}
 
 	// Compound assignment -=
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator-=(const T& value) {
 		dataref_storage -= value;
-		return *this;
+		return dataref_storage;
 	}
 
 	// Compound assignment *=
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator*=(const T& value) {
 		dataref_storage *= value;
-		return *this;
+		return dataref_storage;
 	}
 
 	// Compound assignment /=
-	constexpr CreateDataref<T, ARRAY_SIZE>&
+	T&
 	operator/=(const T& value) {
 		dataref_storage /= value;
-		return *this;
+		return dataref_storage;
 	}
 
-	constexpr friend std::ostream&
+	bool
+	operator==(const T& rhs) {
+		return (dataref_storage == rhs);
+	}
+
+	bool
+	operator!=(const T& rhs) {
+		return (dataref_storage != rhs);
+	}
+
+	bool
+	operator<(const T& rhs) {
+		return (dataref_storage < rhs);
+	}
+
+	bool
+	operator>(const T& rhs) {
+		return (dataref_storage > rhs);
+	}
+
+	bool
+	operator<=(const T& rhs) {
+		return (dataref_storage <= rhs);
+	}
+
+	bool
+	operator>=(const T& rhs) {
+		return (dataref_storage >= rhs);
+	}
+
+	friend std::ostream&
 	operator<<(std::ostream& os, const CreateDataref<T, ARRAY_SIZE>& obj) {
 		os << obj.dataref_storage;
 		return os;
 	}
 
-	constexpr
 	operator T() const noexcept {
 		return dataref_storage;
 	}
 
-	constexpr explicit
+	explicit
 	operator bool() const noexcept {
 		return (dataref_loc != nullptr);
 	}
