@@ -23,10 +23,21 @@
 // 	- DATAREFW_ASSERT(cond)			// - Custom assert function
 //
 // 	- DATAREFW_HARD_ASSERT_FAIL		// - If defined, Assertion will fail if
-// 						// DataRef can not be found
+// 									// DataRef can not be found
+//
+// The main types associated with datarefs are what are supported, if you try
+// to use an unsupported type, you'll get a compile-time assertion failure.
+//
+// Supported types:
+//		int
+//		float
+//		double
+//		DrIntArr (std::vector<int>)
+//		DrFloatArr (std::vector<float>)
+//		std::string
 
-#ifndef _DATAREFW_H_
-#define _DATAREFW_H_
+#ifndef DATAREFW_H
+#define DATAREFW_H
 
 #include <XPLMDataAccess.h>
 #include <XPLMUtilities.h>
@@ -37,7 +48,23 @@
 #include <iostream>
 #include <vector>
 
+#ifdef DATAREFW_UNUSED
+# undef DATAREFW_UNUSED
+#endif // DATAREFW_UNUSED
+
+#ifdef DATAREFW_NODISCARD
+# undef DATAREFW_NODISCARD
+#endif // DATAREFW_NODISCARD
+
 #define DATAREFW_UNUSED(a) (void)(a)
+
+#if (defined(__GNUC__) || defined(__clang__))
+# define DATAREFW_NODISCARD __attribute__ ((warn_unused_result))
+#elif (defined(_MSC_VER))
+# define DATAREFW_NODISCARD _Check_return_
+#else
+# define DATAREFW_NODISCARD
+#endif // (defined(__GNUC__) || defined(__clang__))
 
 #ifndef DATAREFW_ASSERT
 # if (defined(__GNUC__) || defined(__clang__))
@@ -62,40 +89,48 @@ namespace datarefw {
 typedef std::vector<int> DrIntArr;
 typedef std::vector<float> DrFloatArr;
 
-namespace datarefw_utils_ {
+template <typename U>
+struct dr_type_is_array :
+	std::integral_constant<bool,
+		std::is_same<DrIntArr, U>::value ||
+		std::is_same<DrFloatArr, U>::value> {};
 
-	template <typename T>
-	constexpr auto
-	verify_types() -> void {
-		static_assert(
-			(
-			std::is_same<int, T>::value        ||
-			std::is_same<float, T>::value      ||
-			std::is_same<double, T>::value     ||
-			std::is_same<DrIntArr, T>::value   ||
-			std::is_same<DrFloatArr, T>::value ||
-			std::is_same<std::string, T>::value
-			),
-			"Unsupported Type"
-		);
-	}
+template <typename U>
+struct dr_type_is_byte :
+	std::integral_constant<bool,
+		std::is_same<std::string, U>::value> {};
+
+template <typename U>
+struct dr_type_is_number :
+	std::integral_constant<bool,
+		std::is_same<int, U>::value ||
+		std::is_same<float, U>::value ||
+		std::is_same<double, U>::value> {};
+
+template <typename T>
+constexpr void
+verify_types() {
+	static_assert(
+		(
+		std::is_same<int, T>::value        ||
+		std::is_same<float, T>::value      ||
+		std::is_same<double, T>::value     ||
+		std::is_same<DrIntArr, T>::value   ||
+		std::is_same<DrFloatArr, T>::value ||
+		std::is_same<std::string, T>::value
+		),
+		"Unsupported Type"
+	);
 }
 
 template <typename T>
 class FindDataref {
 public:
-	void
-	find_dataref(const std::string& dr_str) {
-		dataref_name = dr_str;
-		impl_find_dataref();
-	}
+	using value_type = T;
 
-	FindDataref() {
-		datarefw_utils_::verify_types<T>();
-	}
+	FindDataref() = default;
 
 	FindDataref(const std::string& dr_str) {
-		datarefw_utils_::verify_types<T>();
 		find_dataref(dr_str);
 	}
 
@@ -104,174 +139,307 @@ public:
 	FindDataref<T>& operator=(const FindDataref<T>& dr_o) = default;
 	FindDataref<T>& operator=(FindDataref<T>&& dr_o) = default;
 
-	friend std::ostream&
-	operator<<(std::ostream& os, const FindDataref<T>& val) {
-		DATAREFW_ASSERT(val.found());
-		// TODO: array datarefs
+	void
+	find_dataref(const std::string& dr_str) {
+		dataref_name = dr_str;
+		impl_find_dataref();
+	}
 
-		switch(val.dataref_types) {
-			case xplmType_Int:
-				os << val.get_dr_val_i();
-				break;
-			case xplmType_Float:
-				os << val.get_dr_val_f();
-				break;
-			case xplmType_Double:
-				os << val.get_dr_val_d();
-				break;
-			case xplmType_Data:
-				os << val.get_dr_val_str();
-				break;
-		};
+	template <typename U = T, typename val_type = typename U::value_type,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr auto
+	operator[](const std::size_t index) -> val_type {
+		return at(index);
+	}
 
+	template <typename U = T,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr std::size_t
+	size() const noexcept {
+		return impl_get_array_size();
+	}
+
+	template <typename U = T, typename val_type = typename U::value_type,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr auto
+	at(std::size_t index) -> val_type {
+		DATAREFW_ASSERT(index < impl_get_array_size());
+		return impl_arr_get_val(index);
+	}
+
+	// Prefix increment
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	constexpr FindDataref<U>&
+	operator++() noexcept {
+		impl_verify_dataref_writable();
+		XPLMSetDatai(dataref_loc, impl_dr_get() + 1);
+		return *this;
+	}
+
+	// Postfix increment
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	constexpr FindDataref<U>
+	operator++(int) noexcept {
+		auto old = *this;
+		operator++();
+		return old;
+	}
+
+	// Prefix decrement
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	constexpr FindDataref<U>&
+	operator--() noexcept {
+		impl_verify_dataref_writable();
+		XPLMSetDatai(dataref_loc, impl_dr_get() - 1);
+		return *this;
+	}
+
+	// Postfix decrement
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	constexpr FindDataref<U>
+	operator--(int) noexcept {
+		auto old = *this;
+		operator--();
+		return old;
+	}
+
+	// Assignment operator
+	constexpr FindDataref<T>&
+	operator=(const T& value) {
+		impl_dr_set(value);
+		return *this;
+	}
+
+	// Compound assignment +=
+	constexpr FindDataref<T>&
+	operator+=(const T& value) {
+		impl_dr_set(impl_dr_get() += value);
+		return *this;
+	}
+
+	// Compound assignment -=
+	constexpr FindDataref<T>&
+	operator-=(const T& value) {
+		impl_dr_set(impl_dr_get() -= value);
+		return *this;
+	}
+
+	// Compound assignment *=
+	constexpr FindDataref<T>&
+	operator*=(const T& value) {
+		impl_dr_set(impl_dr_get() *= value);
+		return *this;
+	}
+
+	// Compound assignment /=
+	constexpr FindDataref<T>&
+	operator/=(const T& value) {
+		impl_dr_set(impl_dr_get() /= value);
+		return *this;
+	}
+
+	constexpr friend std::ostream&
+	operator<<(std::ostream& os, const FindDataref<T>& obj) {
+		os << obj.impl_dr_get();
 		return os;
 	}
 
-	friend FindDataref<T>&
-	operator+(const int val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_i();
-		nval += val;
-		obj.set_dr_val_i(nval);
-		return obj;
-	}
-
-	friend FindDataref<T>&
-	operator+(const float val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_f();
-		nval += val;
-		obj.set_dr_val_f(nval);
-		return obj;
-	}
-
-	friend FindDataref<T>&
-	operator+(const double val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_d();
-		nval += val;
-		obj.set_dr_val_d(nval);
-		return obj;
-	}
-
-	friend FindDataref<T>&
-	operator+(const std::string& val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_str();
-		nval += val;
-		obj.set_dr_val_str(nval);
-		return obj;
-	}
-
-	FindDataref<T>&
-	operator+=(const int val) {
-		auto nval = get_dr_val_i();
-		nval += val;
-		set_dr_val_i(nval);
-		return *this;
-	}
-
-	FindDataref<T>&
-	operator+=(const float val) {
-		auto nval = get_dr_val_f();
-		nval += val;
-		set_dr_val_f(nval);
-		return *this;
-	}
-
-	FindDataref<T>&
-	operator+=(const double val) {
-		auto nval = get_dr_val_d();
-		nval += val;
-		set_dr_val_d(nval);
-		return *this;
-	}
-
-	FindDataref<T>&
-	operator+=(const std::string& val) {
-		auto nval = get_dr_val_str();
-		nval += val;
-		set_dr_val_str(nval);
-		return *this;
-	}
-	
-	friend FindDataref<T>&
-	operator-(const int val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_i();
-		nval -= val;
-		obj.set_dr_val_i(nval);
-		return obj;
-	}
-
-	friend FindDataref<T>&
-	operator-(const float val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_f();
-		nval -= val;
-		obj.set_dr_val_f(nval);
-		return obj;
-	}
-
-	friend FindDataref<T>&
-	operator-(const double val, const FindDataref<T>& obj) {
-		auto nval = obj.get_dr_val_d();
-		nval -= val;
-		obj.set_dr_val_d(nval);
-		return obj;
-	}
-
-	constexpr FindDataref<T>&
-	operator=(const int val) {
-		set_dr_val_i(val);
-		return *this;
-	}
-
-	constexpr FindDataref<T>&
-	operator=(const float val) {
-		set_dr_val_f(val);
-		return *this;
-	}
-
-	constexpr FindDataref<T>&
-	operator=(const double val) {
-		set_dr_val_d(val);
-		return *this;
-	}
-
 	constexpr
-	operator int() const noexcept {
-		return get_dr_val_i();
-	}
-
-	constexpr
-	operator float() const noexcept {
-		return get_dr_val_f();
-	}
-
-	constexpr
-	operator double() const noexcept {
-		return get_dr_val_d();
-	}
-
-	constexpr
-	operator std::string() const {
-		return get_dr_val_str();
+	operator T() const noexcept {
+		return impl_dr_get();
 	}
 
 	constexpr explicit
 	operator bool() const noexcept {
-		return found();
+		return (dataref_loc != nullptr);
 	}
 
-	bool found() const noexcept {
-		return dataref_found;
-	}
-
-	bool is_writable() const noexcept {
-		return dataref_writable;
-	}
-
-	~FindDataref() {
-
-	}
+	~FindDataref() = default;
 private:
-	void impl_find_dataref() {
+	// Int value
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD int
+	impl_dr_get() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDatai(dataref_loc);
+	}
+
+	// Float value
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, float>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD float
+	impl_dr_get() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDataf(dataref_loc);
+	}
+
+	// Double value
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, double>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD double
+	impl_dr_get() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDatad(dataref_loc);
+	}
+
+	// Int array vector
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrIntArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD DrIntArr
+	impl_dr_get() const {
+		impl_verify_dataref_found();
+		auto sz = impl_get_array_size();
+		DrIntArr arr_val(sz);
+		XPLMGetDatavi(dataref_loc, arr_val.data(), 0, sz);
+		return arr_val;
+	}
+
+	// Int array Element
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrIntArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD DrIntArr::value_type
+	impl_arr_get_val(const std::size_t index) const noexcept {
+		impl_verify_dataref_found();
+		DrIntArr::value_type arr_val {};
+		XPLMGetDatavi(dataref_loc, &arr_val, index, 1);
+		return arr_val;
+	}
+
+	// Float array vector
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrFloatArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD DrFloatArr
+	impl_dr_get() const {
+		impl_verify_dataref_found();
+		auto sz = impl_get_array_size();
+		DrFloatArr arr_val(sz);
+		XPLMGetDatavf(dataref_loc, arr_val.data(), 0, sz);
+		return arr_val;
+	}
+
+	// String value
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, std::string>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD std::string
+	impl_dr_get() const {
+		impl_verify_dataref_found();
+
+		auto sz = impl_get_array_size();
+		char *dr_val = new char[sz];
+
+		XPLMGetDatab(dataref_loc, dr_val, 0, sz);
+
+		if (dr_val[sz] != '\0') {
+			dr_val[sz] = '\0';
+		}
+
+		std::string ret_str(dr_val);
+		delete[] dr_val;
+		return ret_str;
+	}
+
+	// Float array Element
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrFloatArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD DrFloatArr::value_type
+	impl_arr_get_val(const std::size_t index) const {
+		impl_verify_dataref_found();
+		DrFloatArr::value_type arr_val {};
+		XPLMGetDatavf(dataref_loc, &arr_val, index, 1);
+		return arr_val;
+	}
+
+	// Int array size
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrIntArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD std::size_t
+	impl_get_array_size() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDatavi(dataref_loc, nullptr, 0, 0);
+	}
+
+	// Float array size
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrFloatArr>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD std::size_t
+	impl_get_array_size() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDatavf(dataref_loc, nullptr, 0, 0);
+	}
+
+	// String size
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, std::string>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD std::size_t
+	impl_get_array_size() const noexcept {
+		impl_verify_dataref_found();
+		return XPLMGetDatab(dataref_loc, nullptr, 0, 0);
+	}
+
+	// Int value set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const int value) const noexcept {
+		impl_verify_dataref_found();
+		XPLMSetDatai(dataref_loc, value);
+	}
+
+	// Float value set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, float>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const float value) const noexcept {
+		impl_verify_dataref_found();
+		XPLMSetDataf(dataref_loc, value);
+	}
+
+	// Double value set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, double>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const float value) const noexcept {
+		impl_verify_dataref_found();
+		XPLMSetDatad(dataref_loc, value);
+	}
+
+	// Int array vector set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrIntArr>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const DrIntArr& value) const {
+		impl_verify_dataref_found();
+		XPLMSetDatavi(dataref_loc, const_cast<int*> (value.data()), 0, value.size());
+	}
+
+	// Float array vector set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, DrFloatArr>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const DrFloatArr& value) const {
+		impl_verify_dataref_found();
+		XPLMSetDatavf(dataref_loc, const_cast<float*> (value.data()), 0, value.size());
+	}
+
+	// String value set
+	template <typename U = T,
+		typename std::enable_if<std::is_same<U, std::string>::value, U>::type* = nullptr>
+	void
+	impl_dr_set(const std::string& value) const {
+		impl_verify_dataref_found();
+		XPLMSetDatab(dataref_loc, const_cast<char *> (value.data()), 0, value.length());
+	}
+
+	void
+	impl_find_dataref() {
 		DATAREFW_ASSERT(dataref_name != "");
+		DATAREFW_ASSERT(dataref_name.find(' ') == std::string::npos);
+		verify_types<T>();
 
 		dataref_loc = XPLMFindDataRef(dataref_name.c_str());
 
@@ -279,7 +447,7 @@ private:
 #ifdef DATAREFW_HARD_ASSERT_FAIL
 			DATAREFW_ASSERT(dataref_loc != nullptr);
 #endif // DATAREFW_HARD_ASSERT_FAIL
-			return;
+			return;			
 		}
 
 		dataref_types = XPLMGetDataRefTypes(dataref_loc);
@@ -297,11 +465,7 @@ private:
 				DATAREFW_ASSERT((std::is_same<double, T>::value));
 				break;
 			case (xplmType_Int | xplmType_Float | xplmType_Double):
-				DATAREFW_ASSERT(
-					(std::is_same<int, T>::value)  ||
-					(std::is_same<float, T>::value)||
-					(std::is_same<double, T>::value)
-				);
+				DATAREFW_ASSERT(dr_type_is_number<T>::value);
 				break;
 			case xplmType_IntArray:
 				DATAREFW_ASSERT((std::is_same<DrIntArr, T>::value));
@@ -322,63 +486,13 @@ private:
 	}
 
 	void
-	verify_dr_can_write() {
-		DATAREFW_ASSERT(is_writable != false);
+	impl_verify_dataref_found() const noexcept {
+		DATAREFW_ASSERT(dataref_loc != nullptr);
 	}
 
-	// Get Integer DataRef
-	int
-	get_dr_val_i() const {
-		return XPLMGetDatai(dataref_loc);
-	}
-	// Set Integer DataRef
 	void
-	set_dr_val_i(const int val) {
-		verify_dr_can_write();
-		XPLMSetDatai(dataref_loc, val);
-	}
-	// Get Float DataRef
-	float
-	get_dr_val_f() const {
-		return XPLMGetDataf(dataref_loc);
-	}
-	// Set Float DataRef
-	void
-	set_dr_val_f(const float val) {
-		verify_dr_can_write();
-		XPLMSetDataf(dataref_loc, val);
-	}
-	// Get Double DataRef
-	double
-	get_dr_val_d() const {
-		return XPLMGetDatad(dataref_loc);
-	}
-	// Set Double DataRef
-	void
-	set_dr_val_d(const double val) {
-		verify_dr_can_write();
-		XPLMSetDatad(dataref_loc, val);
-	}
-	// Get String DataRef
-	std::string
-	get_dr_val_str() const {
-		int byte_dr_sz = XPLMGetDatab(dataref_loc, nullptr, 0, 0);
-		char *byte_dr_data = new char[byte_dr_sz];
-		XPLMGetDatab(dataref_loc, byte_dr_data, 0, byte_dr_sz);
-
-		if (byte_dr_data[byte_dr_sz + 1] != '\0') {
-			byte_dr_data[byte_dr_sz + 1] = '\0';
-		}
-
-		std::string byte_dr_str(byte_dr_data);
-		delete[] byte_dr_data;
-		return byte_dr_str;
-	}
-	// Set String DataRef
-	void
-	set_dr_val_str(const std::string& str) {
-		verify_dr_can_write();
-		XPLMSetDatab(dataref_loc, const_cast<char*> (str.c_str()), 0, str.length() + 1);
+	impl_verify_dataref_writable() const noexcept {
+		DATAREFW_ASSERT(dataref_writable != false);
 	}
 
 	std::string dataref_name;
@@ -388,19 +502,14 @@ private:
 	bool dataref_found { false };
 };
 
-template <typename U>
-	struct dr_type_is_array :
-		std::integral_constant<bool,
-			std::is_same<DrIntArr, U>::value ||
-			std::is_same<DrFloatArr, U>::value> {};
-
-
+	
 template <typename T, std::size_t ARRAY_SIZE = 0>
 class CreateDataref {
 public:
-	CreateDataref() {
+	using value_type = T;
+	using size_type = std::size_t;
 
-	}
+	CreateDataref() = default;
 
 	CreateDataref(const std::string& pdr_path, bool pis_writable = false) {
 		create_dataref(pdr_path, pis_writable);
@@ -420,48 +529,96 @@ public:
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	constexpr auto
-	operator[](std::size_t index) -> val_type const {
-		static_assert(index < ARRAY_SIZE, "Out of bounds access to an array is Undefined Behavior");
+	DATAREFW_NODISCARD constexpr auto
+	operator[](const std::size_t index) -> val_type& {
+		return at(index);
+	}
+
+	template <typename U = T,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr size_type
+	size() const noexcept {
+		return dataref_storage.size();
+	}
+
+	template <typename U = T,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr size_type
+	max_size() const noexcept {
+		return dataref_storage_max_size;
+	}
+
+	template <typename U = T, typename val_type = typename U::value_type,
+		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
+	DATAREFW_NODISCARD constexpr auto
+	at(size_type index) -> val_type& {
+		DATAREFW_ASSERT(index < ARRAY_SIZE);
 		return dataref_storage[index];
 	}
 
-	// Prefix increment (int only)
-	template <typename U = T,
-		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	CreateDataref<T, ARRAY_SIZE>&
-	operator++() {
+	// Prefix increment
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator++() noexcept {
 		dataref_storage++;
 		return *this;
 	}
 
-	// Postfix increment (int only)
-	template <typename U = T,
-		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	CreateDataref<T, ARRAY_SIZE>
-	operator++(int) {
+	// Postfix increment
+	constexpr CreateDataref<T, ARRAY_SIZE>
+	operator++(int) noexcept {
 		auto old = *this;
 		operator++();
 		return old;
 	}
 
-	// Prefix decrement (int only)
-	template <typename U = T,
-		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	CreateDataref<T, ARRAY_SIZE>&
-	operator--() {
+	// Prefix decrement
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator--() noexcept {
 		dataref_storage--;
 		return *this;
 	}
 
-	// Postfix decrement (int only)
-	template <typename U = T,
-		typename std::enable_if<std::is_same<U, int>::value, U>::type* = nullptr>
-	CreateDataref<T, ARRAY_SIZE>
-	operator--(int) {
+	// Postfix decrement
+	constexpr CreateDataref<T, ARRAY_SIZE>
+	operator--(int) noexcept {
 		auto old = *this;
 		operator--();
 		return old;
+	}
+
+	// Assignment operator
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator=(const T& value) {
+		dataref_storage = value;
+		return *this;
+	}
+
+	// Compound assignment +=
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator+=(const T& value) {
+		dataref_storage += value;
+		return *this;
+	}
+
+	// Compound assignment -=
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator-=(const T& value) {
+		dataref_storage -= value;
+		return *this;
+	}
+
+	// Compound assignment *=
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator*=(const T& value) {
+		dataref_storage *= value;
+		return *this;
+	}
+
+	// Compound assignment /=
+	constexpr CreateDataref<T, ARRAY_SIZE>&
+	operator/=(const T& value) {
+		dataref_storage /= value;
+		return *this;
 	}
 
 	constexpr friend std::ostream&
@@ -484,19 +641,6 @@ public:
 		impl_dr_cleanup();
 	}
 private:
-	
-	template <typename U>
-	struct dr_type_is_byte :
-		std::integral_constant<bool,
-			std::is_same<std::string, U>::value> {};
-
-	template <typename U>
-	struct dr_type_is_number :
-		std::integral_constant<bool,
-			std::is_same<int, U>::value ||
-			std::is_same<float, U>::value ||
-			std::is_same<double, U>::value> {};
-
 	template <typename U, std::size_t ARR_SIZE = 0>
 	static CreateDataref<U, ARR_SIZE> *
 	impl_proc_ref(void *refcon) {
@@ -531,7 +675,7 @@ private:
 	}
 
 	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
-	static int
+	DATAREFW_NODISCARD static int
 	impl_dr_read_byte(void *refcon, void *values, int offset, int max) {
 		const auto odr = impl_proc_ref<std::string>(refcon);
 		const int a_sz = static_cast<int> (odr->dataref_storage.size());
@@ -584,7 +728,7 @@ private:
 
 	template <typename U, typename V = T, std::size_t ARR_SIZE = ARRAY_SIZE,
 		typename std::enable_if<dr_type_is_array<V>::value, V>::type* = nullptr>
-	static int
+	DATAREFW_NODISCARD static int
 	impl_dr_read_tmplt_arr(void *refcon, U *values, int offset, int max) {
 		const auto odr = impl_proc_ref<T, ARR_SIZE>(refcon);
 		const int a_sz = static_cast<int> (odr->dataref_storage.size());
@@ -747,23 +891,21 @@ private:
 	// I'm sure there's a more *elaborate* way to do the following of which I'm not aware of:
 	template <std::size_t ARR_SIZE = ARRAY_SIZE, typename U = T,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
-	constexpr auto
-	array_verif() -> void {
+	constexpr void
+	array_verif() const noexcept {
 		static_assert(ARR_SIZE > 0, "Array size can't be zero.");
 	}
 
 	template <typename U = T, typename std::enable_if<!dr_type_is_array<U>::value, U>::type* = nullptr>
-	constexpr auto
-	array_verif() -> void {
-
-	}
+	constexpr void
+	array_verif() const noexcept {}
 
 	void
 	impl_create_dataref() {
 		DATAREFW_ASSERT(dataref_name != "");
 		DATAREFW_ASSERT(dataref_name.find(' ') == std::string::npos);
 
-		datarefw_utils_::verify_types<T>();
+		verify_types<T>();
 		array_verif();
 		impl_dr_get_datatype();
 		register_dataref_accessor();
@@ -782,8 +924,9 @@ private:
 	XPLMDataTypeID dataref_types { xplmType_Unknown };
 	bool dataref_writable { false };
 	T dataref_storage { };
+	static constexpr size_type dataref_storage_max_size = ARRAY_SIZE;
 };
 
 } // namespace datarefw
 
-#endif // _DATAREFW_H_
+#endif // DATAREFW_H
