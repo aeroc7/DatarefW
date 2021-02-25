@@ -75,8 +75,8 @@
 
 namespace datarefw {
 
-typedef std::vector<int> DrIntArr;
-typedef std::vector<float> DrFloatArr;
+using DrIntArr = std::vector<int>;
+using DrFloatArr = std::vector<float>;
 
 template <typename U>
 struct dr_type_is_array :
