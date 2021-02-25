@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.1)
 project(dataref_tests)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++11 -fPIC -g -O2 -fno-gnu-unique")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --std=c++11 -fPIC -g -O2")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --std=c99 -fPIC -g -O2")
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU") #GCC
@@ -28,7 +28,7 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU") #GCC
 
 	set(WARN_LIST_C "${WARN_LIST_COMMON}")
 
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARN_LIST_CXX}")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${WARN_LIST_CXX} -fno-gnu-unique")
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${WARN_LIST_C}")
 endif()
 
