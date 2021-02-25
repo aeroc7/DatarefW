@@ -12,7 +12,7 @@ using namespace datarefw;
 class DatarefDatabase {
 public:
 	DatarefDatabase() {
-		my_int_array_dataref.create_dataref("testing/test_int_array_dr", true);
+		my_int_array_dataref.create_dataref("testing/test_int_array_dr");
 		my_string_dataref.create_dataref("testing/test_string_dr", true);
 		my_string_dataref = "abcdefghijklmnopqrstuvwxyz";
 			// Equality operator
