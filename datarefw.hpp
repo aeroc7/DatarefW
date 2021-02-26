@@ -358,7 +358,10 @@ private:
 		impl_verify_dataref_found();
 
 		auto sz = impl_get_array_size();
-		char *dr_val = new char[sz];
+
+		if (sz == 0) { return {}; }
+
+		char *dr_val = new char[sz + 1];
 
 		XPLMGetDatab(dataref_loc, dr_val, 0, sz);
 
@@ -701,7 +704,7 @@ private:
 	template <typename U = T, typename std::enable_if<dr_type_is_byte<U>::value, U>::type* = nullptr>
 	static void
 	impl_dr_write_byte(void *refcon, void *values, int offset, int count) {
-		if (values == nullptr || offset >= count) {
+		if (values == nullptr || offset >= count || count == 0) {
 			return;
 		}
 
@@ -709,7 +712,7 @@ private:
 
 		auto ncount = count - offset;
 		char *cvalues = static_cast<char *> (values);
-		char *temp_val = new char[count];
+		char *temp_val = new char[count + 1];
 		const auto odr = impl_proc_ref<std::string>(refcon);
 
 		cvalues += offset; // Read from offset
