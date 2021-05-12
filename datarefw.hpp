@@ -62,8 +62,10 @@
 #  define DATAREFW_ASSERT(x) \
 	do { \
 		if (DATAREFW_COND_UNLIKELY(!(x))) { \
-			XPLMDebugString(std::string("Assertion " + \
-				std::string(#x) + " failed\n").c_str()); \
+			const auto full_str = std::string("Assertion " + \
+				std::string(#x) + " failed\n"); \
+			XPLMDebugString(full_str.c_str()); \
+			std::cout << full_str << std::flush; \
 			abort(); \
 		} \
 	} while (0)
