@@ -286,6 +286,12 @@ public:
 		return dataref_found;
 	}
 
+	DATAREFW_NODISCARD auto
+	path() const {
+		DATAREFW_ASSERT(dataref_found);
+		return dataref_name;
+	}
+
 	~FindDataref() = default;
 private:
 	// Int value
@@ -688,6 +694,11 @@ public:
 	explicit
 	operator bool() const noexcept {
 		return (dataref_loc != nullptr);
+	}
+
+	DATAREFW_NODISCARD auto
+	path() const {
+		return dataref_name;
 	}
 
 	~CreateDataref() {
