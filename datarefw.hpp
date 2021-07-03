@@ -558,9 +558,9 @@ public:
 		impl_create_dataref();
 	}
 
-	CreateDataref(const CreateDataref<T, ARRAY_SIZE>& dr_o) = default;
+	CreateDataref(const CreateDataref<T, ARRAY_SIZE>& dr_o) = delete;
 	CreateDataref(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
-	CreateDataref<T, ARRAY_SIZE>& operator=(const CreateDataref<T, ARRAY_SIZE>& dr_o) = default;
+	CreateDataref<T, ARRAY_SIZE>& operator=(const CreateDataref<T, ARRAY_SIZE>& dr_o) = delete;
 	CreateDataref<T, ARRAY_SIZE>& operator=(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
 
 	template <typename U = T, typename val_type = typename U::value_type,
