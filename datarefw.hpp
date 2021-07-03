@@ -559,9 +559,13 @@ public:
 	}
 
 	CreateDataref(const CreateDataref<T, ARRAY_SIZE>& dr_o) = delete;
-	CreateDataref(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
+	CreateDataref(CreateDataref<T, ARRAY_SIZE>&& dr_o) noexcept
+        : dataref_loc(std::exchange(dr_o.dataref_loc, nullptr)) {}
 	CreateDataref<T, ARRAY_SIZE>& operator=(const CreateDataref<T, ARRAY_SIZE>& dr_o) = delete;
-	CreateDataref<T, ARRAY_SIZE>& operator=(CreateDataref<T, ARRAY_SIZE>&& dr_o) = default;
+	CreateDataref<T, ARRAY_SIZE>& operator=(CreateDataref<T, ARRAY_SIZE>&& dr_o) noexcept {
+        std::swap(dataref_loc, dr_o.dataref_loc);
+        return *this;
+    }
 
 	template <typename U = T, typename val_type = typename U::value_type,
 		typename std::enable_if<dr_type_is_array<U>::value, U>::type* = nullptr>
